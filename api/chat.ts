@@ -96,46 +96,51 @@ export default async function handler(req: any, res: any) {
     return res.end(JSON.stringify({ error: "Method not allowed" }));
   }
 
+  const requestBody = await getRequestBody(req);
+  const message = requestBody?.message;
+
+  if (!message) {
+    return res.status(400).json({ error: "Message is required" });
+  }
+
+  let contextData = "";
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    const configuredModel = process.env.GEMINI_MODEL?.trim();
-    if (!apiKey) {
-      return res.status(500).json({ error: "Server error: Missing Gemini API Key" });
-    }
-
-    const { message } = await getRequestBody(req);
-    if (!message) {
-      return res.status(400).json({ error: "Message is required" });
-    }
-
-    let contextData = "";
-    try {
-      if (fs.existsSync(dbPath)) {
-        const dbContent = fs.readFileSync(dbPath, "utf-8");
-        const parsed = JSON.parse(dbContent);
-        contextData = parsed.context || "";
-      } else {
-        contextData = initialRagDb.context || "";
-      }
-    } catch (e) {
-      console.warn("Using fallback context data:", e);
+    if (fs.existsSync(dbPath)) {
+      const dbContent = fs.readFileSync(dbPath, "utf-8");
+      const parsed = JSON.parse(dbContent);
+      contextData = parsed.context || "";
+    } else {
       contextData = initialRagDb.context || "";
     }
+  } catch (e) {
+    console.warn("Using fallback context data:", e);
+    contextData = initialRagDb.context || "";
+  }
 
-    const systemPrompt = `Bertindaklah sebagai asisten LPK Minna No Gakkou yang ramah dan profesional.
-    
+  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+  const configuredModel = process.env.GEMINI_MODEL?.trim();
+
+  if (!apiKey) {
+    console.warn("Missing Gemini API Key, using local fallback response.");
+    const fallbackReply = getLocalFallbackResponse(message, contextData);
+    return res.status(200).json({ reply: fallbackReply, fallback: true });
+  }
+
+  const systemPrompt = `Bertindaklah sebagai asisten LPK Minna No Gakkou yang ramah dan profesional.
+
 ATURAN KETAT:
 1. Anda HANYA boleh menjawab pertanyaan berdasarkan Teks Konteks yang ditarik dari database di bawah ini.
 2. Jika kandidat bertanya di luar topik lowongan kerja, biaya, dan program LPK yang tercantum, atau sekadar basa-basi yang tidak umum untuk LPK, tolak dengan sopan dengan mengatakan Anda hanya bisa membantu seputar informasi LPK Minna No Gakkou.
 3. Dilarang keras mengarang jawaban (halusinasi) yang tidak ada di Teks Konteks.
 4. Gunakan gaya bahasa yang sopan dan mudah dipahami, berikan poin-poin yang rapi.
 5. Jika ditanya ada "lowongan apa" atau detail job tertentu, sebutkan lowongan pekerjaan sesuai dengan yang tercantum dalam Teks Konteks di bawah ini, termasuk biaya, lokasi, dan syaratnya.
-    
+
 ==== TEKS KONTEKS ====
 ${contextData}
 ======================
 `;
 
+  try {
     const ai = new GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({
       model: configuredModel || "gemini-2.5-flash",
@@ -148,7 +153,7 @@ ${contextData}
     return res.status(200).json({ reply: response.text });
   } catch (error: any) {
     console.warn("Gemini failing/exhausted, using local fallback parsing:", error?.message || error);
-    const fallbackReply = getLocalFallbackResponse((await getRequestBody(req)).message || "", "");
+    const fallbackReply = getLocalFallbackResponse(message, contextData);
     return res.status(200).json({ reply: fallbackReply });
   }
 }
