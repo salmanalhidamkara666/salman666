@@ -1,0 +1,6 @@
+{
+  "name": "LPK Minna No Gakkou",
+  "description": "Lembaga Pelatihan Kerja dan Pendidikan Bahasa Jepang Profesional",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
