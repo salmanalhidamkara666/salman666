@@ -99,31 +99,32 @@ const getRequestBody = async (req: any) => {
 };
 
 export default async function handler(req: any, res: any) {
-  if (req.method !== "POST") {
-    res.statusCode = 405;
-    res.setHeader("Allow", "POST");
-    return res.end(JSON.stringify({ error: "Method not allowed" }));
-  }
+  try {
+    if (req.method !== "POST") {
+      res.statusCode = 405;
+      res.setHeader("Allow", "POST");
+      return res.end(JSON.stringify({ error: "Method not allowed" }));
+    }
 
-  const requestBody = await getRequestBody(req);
-  const message = requestBody?.message;
+    const requestBody = await getRequestBody(req);
+    const message = requestBody?.message;
 
-  if (!message) {
-    return res.status(400).json({ error: "Message is required" });
-  }
+    if (!message) {
+      return res.status(400).json({ error: "Message is required" });
+    }
 
-  const contextData = loadRagContext();
+    const contextData = loadRagContext();
 
-  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-  const configuredModel = process.env.GEMINI_MODEL?.trim();
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+    const configuredModel = process.env.GEMINI_MODEL?.trim();
 
-  if (!apiKey) {
-    console.warn("Missing Gemini API Key, using local fallback response.");
-    const fallbackReply = getLocalFallbackResponse(message, contextData);
-    return res.status(200).json({ reply: fallbackReply, fallback: true });
-  }
+    if (!apiKey) {
+      console.warn("Missing Gemini API Key, using local fallback response.");
+      const fallbackReply = getLocalFallbackResponse(message, contextData);
+      return res.status(200).json({ reply: fallbackReply, fallback: true });
+    }
 
-  const systemPrompt = `Bertindaklah sebagai asisten LPK Minna No Gakkou yang ramah dan profesional.
+    const systemPrompt = `Bertindaklah sebagai asisten LPK Minna No Gakkou yang ramah dan profesional.
 
 ATURAN KETAT:
 1. Anda HANYA boleh menjawab pertanyaan berdasarkan Teks Konteks yang ditarik dari database di bawah ini.
@@ -137,21 +138,25 @@ ${contextData}
 ======================
 `;
 
-  try {
-    const { GoogleGenAI } = await import("@google/genai");
-    const ai = new GoogleGenAI({ apiKey });
-    const response = await ai.models.generateContent({
-      model: configuredModel || "gemini-2.5-flash",
-      contents: message,
-      config: {
-        systemInstruction: systemPrompt,
-      },
-    });
+    try {
+      const { GoogleGenAI } = await import("@google/genai");
+      const ai = new GoogleGenAI({ apiKey });
+      const response = await ai.models.generateContent({
+        model: configuredModel || "gemini-2.5-flash",
+        contents: message,
+        config: {
+          systemInstruction: systemPrompt,
+        },
+      });
 
-    return res.status(200).json({ reply: response.text });
+      return res.status(200).json({ reply: response.text });
+    } catch (error: any) {
+      console.warn("Gemini failing/exhausted or import failed, using local fallback parsing:", error?.message || error);
+      const fallbackReply = getLocalFallbackResponse(message, contextData);
+      return res.status(200).json({ reply: fallbackReply });
+    }
   } catch (error: any) {
-    console.warn("Gemini failing/exhausted or import failed, using local fallback parsing:", error?.message || error);
-    const fallbackReply = getLocalFallbackResponse(message, contextData);
-    return res.status(200).json({ reply: fallbackReply });
+    console.error("Unhandled chat handler error:", error);
+    return res.status(500).json({ error: "Terjadi kesalahan internal. Silakan coba lagi." });
   }
 }
