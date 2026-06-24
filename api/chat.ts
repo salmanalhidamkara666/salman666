@@ -1,12 +1,21 @@
 import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
-import { GoogleGenAI } from "@google/genai";
-import initialRagDb from "../src/data/rag_db.json";
 
 dotenv.config();
 
 const dbPath = path.join(process.cwd(), "src/data/rag_db.json");
+
+const loadRagContext = (): string => {
+  try {
+    const dbContent = fs.readFileSync(dbPath, "utf-8");
+    const parsed = JSON.parse(dbContent);
+    return parsed.context || "";
+  } catch (error) {
+    console.warn("Failed to load RAG DB context:", error);
+    return "";
+  }
+};
 
 function getLocalFallbackResponse(msg: string, context: string): string {
   const query = msg.toLowerCase();
@@ -103,19 +112,7 @@ export default async function handler(req: any, res: any) {
     return res.status(400).json({ error: "Message is required" });
   }
 
-  let contextData = "";
-  try {
-    if (fs.existsSync(dbPath)) {
-      const dbContent = fs.readFileSync(dbPath, "utf-8");
-      const parsed = JSON.parse(dbContent);
-      contextData = parsed.context || "";
-    } else {
-      contextData = initialRagDb.context || "";
-    }
-  } catch (e) {
-    console.warn("Using fallback context data:", e);
-    contextData = initialRagDb.context || "";
-  }
+  const contextData = loadRagContext();
 
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   const configuredModel = process.env.GEMINI_MODEL?.trim();
@@ -141,6 +138,7 @@ ${contextData}
 `;
 
   try {
+    const { GoogleGenAI } = await import("@google/genai");
     const ai = new GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({
       model: configuredModel || "gemini-2.5-flash",
@@ -152,7 +150,7 @@ ${contextData}
 
     return res.status(200).json({ reply: response.text });
   } catch (error: any) {
-    console.warn("Gemini failing/exhausted, using local fallback parsing:", error?.message || error);
+    console.warn("Gemini failing/exhausted or import failed, using local fallback parsing:", error?.message || error);
     const fallbackReply = getLocalFallbackResponse(message, contextData);
     return res.status(200).json({ reply: fallbackReply });
   }

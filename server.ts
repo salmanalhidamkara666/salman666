@@ -3,8 +3,6 @@ import path from "path";
 import fs from "fs";
 import cors from "cors";
 import dotenv from "dotenv";
-import { GoogleGenAI } from "@google/genai";
-import initialRagDb from "./src/data/rag_db.json";
 
 dotenv.config();
 
@@ -16,18 +14,30 @@ app.use(express.json());
 
 const dbPath = path.join(process.cwd(), "src/data/rag_db.json");
 
+const loadRagData = (): { context: string } => {
+  try {
+    if (fs.existsSync(dbPath)) {
+      const dbContent = fs.readFileSync(dbPath, "utf-8");
+      return JSON.parse(dbContent);
+    }
+  } catch (error) {
+    console.warn("Failed to load RAG DB data:", error);
+  }
+  return { context: "" };
+};
+
+const loadRagContext = (): string => {
+  return loadRagData().context || "";
+};
+
 // API Routes
 app.get("/api/rag-content", (req, res) => {
   try {
-    if (fs.existsSync(dbPath)) {
-      const data = fs.readFileSync(dbPath, "utf-8");
-      res.json(JSON.parse(data));
-    } else {
-      res.json(initialRagDb);
-    }
+    const data = loadRagData();
+    res.json(data);
   } catch (error) {
-    console.warn("Using initialRagDb fallback for reading RAG:", error);
-    res.json(initialRagDb);
+    console.warn("Failed to read RAG content:", error);
+    res.json({ context: "" });
   }
 });
 
@@ -113,26 +123,22 @@ app.post("/api/chat", async (req, res) => {
       return res.status(500).json({ error: "Server error: Missing Gemini API Key" });
     }
 
-    const ai = new GoogleGenAI({ apiKey });
     const { message } = req.body;
 
     if (!message) {
       return res.status(400).json({ error: "Message is required" });
     }
 
-    let contextData = "";
+    let ai: any;
     try {
-      if (fs.existsSync(dbPath)) {
-        const dbContent = fs.readFileSync(dbPath, "utf-8");
-        const parsed = JSON.parse(dbContent);
-        contextData = parsed.context || "";
-      } else {
-        contextData = initialRagDb.context || "";
-      }
-    } catch (e) {
-      console.warn("Using fallback context data:", e);
-      contextData = initialRagDb.context || "";
+      const module = await import("@google/genai");
+      const { GoogleGenAI } = module;
+      ai = new GoogleGenAI({ apiKey });
+    } catch (importError: any) {
+      console.warn("GoogleGenAI import failed, fallback only:", importError?.message || importError);
     }
+
+    const contextData = loadRagContext();
 
     const systemPrompt = `Bertindaklah sebagai asisten LPK Minna No Gakkou yang ramah dan profesional.
     
@@ -199,7 +205,12 @@ ${contextData}
 
     try {
       const response = await generateContentWithRetry();
-      res.json({ reply: response.text });
+      if (response?.text) {
+        res.json({ reply: response.text });
+        return;
+      }
+      const fallbackReply = getLocalFallbackResponse(message, contextData);
+      res.json({ reply: fallbackReply });
     } catch (error: any) {
       console.warn("Gemini failing/exhausted, using local fallback parsing:", error.message || error);
       const fallbackReply = getLocalFallbackResponse(message, contextData);
